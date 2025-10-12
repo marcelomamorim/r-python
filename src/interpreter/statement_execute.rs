@@ -242,13 +242,19 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
         }
 
         Statement::Assignment(name, exp) => {
+            if let Expression::Lambda(mut func) = (*exp).clone() {
+                func.name = name.clone();
+                new_env.map_function(func);
+                return Ok(Computation::Continue(new_env));
+            }
+
             let value = match eval(*exp, &new_env)? {
                 ExpressionResult::Value(expr) => expr,
                 ExpressionResult::Propagate(expr) => {
                     return Ok(Computation::PropagateError(expr, new_env))
                 }
             };
-            // Respect existing mutability; if variable exists and is immutable, propagate error
+
             match new_env.lookup(&name) {
                 Some((is_mut, _)) => {
                     if !is_mut {
@@ -263,10 +269,10 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
                     let _ = new_env.update_existing_variable(&name, value);
                 }
                 None => {
-                    // If not previously declared, create as mutable (back-compat with tests)
                     new_env.map_variable(name, true, value);
                 }
             }
+
             Ok(Computation::Continue(new_env))
         }
 
@@ -294,12 +300,7 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
             }
         }
 
-        Statement::Block(stmts) => {
-            new_env.push();
-            let result = execute_block(stmts, &new_env);
-            new_env.pop();
-            result
-        }
+        Statement::Block(stmts) => execute_block(stmts, &new_env),
 
         Statement::While(cond, stmt) => {
             let mut value = match eval(*cond.clone(), &new_env)? {
@@ -486,7 +487,6 @@ pub fn execute_block(
     env: &Environment<Expression>,
 ) -> Result<Computation, String> {
     let mut current_env = env.clone();
-
     for stmt in stmts {
         match execute(stmt, &current_env)? {
             Computation::Continue(new_env) => current_env = new_env,

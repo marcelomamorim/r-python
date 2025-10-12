@@ -130,6 +130,31 @@ impl Expression {
                 )
             }
 
+            Expression::Lambda(func) => {
+                let param_docs: Vec<Rc<Doc>> = func
+                    .params
+                    .iter()
+                    .map(|arg| text(format!("{}: {}", arg.argument_name, arg.argument_type)))
+                    .collect();
+                let params_block = group(concat(
+                    text("("),
+                    concat(
+                        nest(
+                            4,
+                            concat(line(), punctuate(concat(text(","), line()), &param_docs)),
+                        ),
+                        concat(line(), text(")")),
+                    ),
+                ));
+                concat(
+                    text("lambda "),
+                    concat(
+                        params_block,
+                        concat(text(" -> "), text(func.kind.to_string())),
+                    ),
+                )
+            }
+
             Expression::ListValue(elements) => {
                 let elem_docs: Vec<Rc<Doc>> =
                     elements.iter().map(|e| e.to_doc_inner(PREC_NONE)).collect();

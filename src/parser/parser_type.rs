@@ -8,7 +8,8 @@ use nom::{
     IResult,
 };
 
-use crate::ir::ast::{Type, ValueConstructor};
+use crate::ir::ast::{Name, Type};
+use std::collections::HashMap;
 
 use crate::parser::parser_common::{
     identifier, keyword, separator, ANY_TYPE, BOOLEAN_TYPE, COLON_CHAR, COMMA_CHAR, COMMA_SYMBOL,
@@ -113,7 +114,7 @@ fn parse_function_type(input: &str) -> IResult<&str, Type> {
             preceded(multispace0, tag(FUNCTION_ARROW)),
             preceded(multispace0, parse_type),
         )),
-        |(_, t_args, _, _, t_ret)| Type::TFunction(Box::new(Some(t_ret)), t_args),
+        |(_, t_args, _, _, t_ret)| Type::TFunction(Box::new(t_ret), t_args),
     )(input)
 }
 
@@ -126,18 +127,21 @@ fn parse_adt_type(input: &str) -> IResult<&str, Type> {
             many1(parse_adt_cons),
             preceded(multispace0, keyword(END_KEYWORD)),
         )),
-        |(_, name, _, cons, _)| Type::TAlgebraicData(name.to_string(), cons),
+        |(_, name, _, cons, _)| {
+            let cons_map: HashMap<Name, Vec<Type>> = cons.into_iter().collect();
+            Type::TAlgebraicData(name.to_string(), cons_map)
+        },
     )(input)
 }
 
-fn parse_adt_cons(input: &str) -> IResult<&str, ValueConstructor> {
+fn parse_adt_cons(input: &str) -> IResult<&str, (Name, Vec<Type>)> {
     map(
         tuple((
             preceded(multispace0, char(PIPE_CHAR)),
             preceded(multispace0, identifier),
             separated_list0(multispace0, parse_type),
         )),
-        |(_, name, types)| ValueConstructor::new(name.to_string(), types),
+        |(_, name, types)| (name.to_string(), types),
     )(input)
 }
 
@@ -192,10 +196,7 @@ mod tests {
             parse_function_type("(Int, Boolean) -> String"),
             Ok((
                 "",
-                Type::TFunction(
-                    Box::new(Some(Type::TString)),
-                    vec![Type::TInteger, Type::TBool]
-                )
+                Type::TFunction(Box::new(Type::TString), vec![Type::TInteger, Type::TBool])
             ))
         );
     }
@@ -204,13 +205,10 @@ mod tests {
     #[ignore]
     fn test_parse_adt_type() {
         let input = "data Maybe:\n  | Just Int\n  | Nothing\nend";
-        let expected = Type::TAlgebraicData(
-            "Maybe".to_string(),
-            vec![
-                ValueConstructor::new("Just".to_string(), vec![Type::TInteger]),
-                ValueConstructor::new("Nothing".to_string(), vec![]),
-            ],
-        );
+        let mut expected_constructors = HashMap::new();
+        expected_constructors.insert("Just".to_string(), vec![Type::TInteger]);
+        expected_constructors.insert("Nothing".to_string(), vec![]);
+        let expected = Type::TAlgebraicData("Maybe".to_string(), expected_constructors);
         assert_eq!(parse_adt_type(input), Ok(("", expected)));
     }
 }

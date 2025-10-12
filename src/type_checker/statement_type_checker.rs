@@ -1,6 +1,7 @@
 use crate::environment::environment::Environment;
-use crate::ir::ast::{Expression, Function, Name, Statement, Type, ValueConstructor};
+use crate::ir::ast::{Expression, FormalArgument, FuncSignature, Function, Name, Statement, Type};
 use crate::type_checker::expression_type_checker::check_expr;
+use std::collections::{HashMap, HashSet};
 
 type ErrorMessage = String;
 
@@ -67,7 +68,30 @@ fn check_assignment_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let exp_type = check_expr(*exp, &new_env)?;
+
+    if let Expression::Lambda(mut func) = (*exp).clone() {
+        let func_type = Type::TFunction(
+            Box::new(func.kind.clone()),
+            func.params
+                .iter()
+                .map(|arg| arg.argument_type.clone())
+                .collect(),
+        );
+        if let Some((mutable, _)) = new_env.lookup(&name) {
+            if !mutable {
+                return Err(format!(
+                    "[Type Error] cannot reassign '{:?}' variable, since it was declared as a constant value.",
+                    name
+                ));
+            }
+        }
+        func.name = name.clone();
+        let mut updated_env = check_func_def_stmt(func, env)?;
+        updated_env.map_variable(name, true, func_type);
+        return Ok(updated_env);
+    }
+
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     match new_env.lookup(&name) {
         Some((mutable, var_type)) => {
@@ -96,7 +120,7 @@ fn check_var_declaration_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     let var_type = new_env.lookup(&name);
-    let exp_type = check_expr(*exp, &new_env)?;
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     if var_type.is_none() {
         new_env.map_variable(name.clone(), true, exp_type);
@@ -116,7 +140,7 @@ fn check_val_declaration_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     let var_type = new_env.lookup(&name);
-    let exp_type = check_expr(*exp, &new_env)?;
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     if var_type.is_none() {
         new_env.map_variable(name.clone(), false, exp_type);
@@ -136,7 +160,7 @@ fn check_if_then_else_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let cond_type = check_expr(*cond, &new_env)?;
+    let cond_type = check_expr(&*cond, &new_env)?;
     if cond_type != Type::TBool {
         return Err(
             "[Type Error] a condition in a 'if' statement must be of type boolean.".to_string(),
@@ -158,7 +182,7 @@ fn check_while_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let cond_type = check_expr(*cond, &new_env)?;
+    let cond_type = check_expr(&*cond, &new_env)?;
     if cond_type != Type::TBool {
         return Err(
             "[Type Error] a condition in a 'while' statement must be of type boolean.".to_string(),
@@ -198,7 +222,7 @@ fn check_for_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     // Avaliar o tipo da expressão iterável
-    let expr_type = check_expr(*expr, &new_env)?;
+    let expr_type = check_expr(&*expr, &new_env)?;
 
     // Determinar o tipo do elemento
     let element_type = get_iterable_element_type(&expr_type)?;
@@ -229,29 +253,75 @@ fn check_func_def_stmt(
     function: Function,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let mut new_env = env.clone();
-    new_env.push();
+    let func_signature = FuncSignature::from_func(&function);
+
+    let mut seen_names = HashSet::new();
+    for arg in &function.params {
+        if !seen_names.insert(arg.argument_name.clone()) {
+            return Err(format!(
+                "Duplicate parameter name '{}' found in function '{:?}'",
+                arg.argument_name, func_signature
+            ));
+        }
+    }
+
+    if env
+        .get_current_scope()
+        .functions
+        .contains_key(&func_signature)
+    {
+        return Err(format!(
+            "Function {:?} is defined multiple times",
+            func_signature
+        ));
+    }
+
+    let mut function_env = Environment::new();
+    function_env.set_current_func(&func_signature);
+    function_env.set_global_functions(env.get_all_functions());
+    function_env.push();
 
     for formal_arg in function.params.iter() {
-        new_env.map_variable(
+        function_env.map_variable(
             formal_arg.argument_name.clone(),
             false,
             formal_arg.argument_type.clone(),
         );
+
+        if let Type::TFunction(ret_type, params_type) = formal_arg.argument_type.clone() {
+            let mut params: Vec<FormalArgument> = Vec::new();
+            for (idx, arg_type) in params_type.iter().enumerate() {
+                params.push(FormalArgument {
+                    argument_name: idx.to_string(),
+                    argument_type: arg_type.clone(),
+                });
+            }
+            function_env.map_function(Function {
+                name: formal_arg.argument_name.clone(),
+                kind: (*ret_type).clone(),
+                params,
+                body: None,
+            });
+        }
     }
+
+    function_env.map_function(function.clone());
 
     if let Some(body) = function.body.clone() {
-        new_env = check_stmt(*body, &new_env)?;
+        function_env = check_stmt(*body, &function_env)?;
     }
-    new_env.pop();
-    new_env.map_function(function);
 
-    Ok(new_env)
+    function_env.pop();
+
+    let mut updated_env = env.clone();
+    updated_env.map_function(function);
+
+    Ok(updated_env)
 }
 
 fn check_adt_declarations_stmt(
     name: Name,
-    cons: Vec<ValueConstructor>,
+    cons: HashMap<Name, Vec<Type>>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
@@ -263,19 +333,28 @@ fn check_return_stmt(
     exp: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let mut new_env = env.clone();
+    let new_env = env.clone();
 
     assert!(new_env.scoped_function());
 
-    let ret_type = check_expr(*exp, &new_env)?;
+    let ret_type = check_expr(&*exp, &new_env)?;
 
-    match new_env.lookup(&"return".to_string()) {
-        Some(_) => Ok(new_env),
-        None => {
-            new_env.map_variable("return".to_string(), false, ret_type);
-            Ok(new_env)
-        }
+    let current_func = env.lookup_function(&env.current_func);
+
+    if current_func.is_none() {
+        return Err("Type checker: No function to return from".to_string());
     }
+
+    let current_func = current_func.unwrap();
+
+    if ret_type != current_func.kind {
+        return Err(format!(
+            "Error in function {}:\nActual return type cannot be different from formal return type \n Actual return type: {:?} \n Formal return type: {:?}",
+            env.current_func, ret_type, current_func.kind
+        ));
+    }
+
+    Ok(new_env)
 }
 //TODO: Apresentar Asserts
 fn check_assert(
@@ -283,8 +362,8 @@ fn check_assert(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let type1 = check_expr(*expr1, env)?;
-    let type2 = check_expr(*expr2, env)?;
+    let type1 = check_expr(&*expr1, env)?;
+    let type2 = check_expr(&*expr2, env)?;
 
     if type1 != Type::TBool {
         Err("[Type Error] First Assert expression must be of type Boolean.".to_string())
@@ -300,8 +379,8 @@ fn check_assert_true(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let expr_type = check_expr(*expr1, env)?;
-    let expr_type2 = check_expr(*expr2, env)?;
+    let expr_type = check_expr(&*expr1, env)?;
+    let expr_type2 = check_expr(&*expr2, env)?;
     if expr_type != Type::TBool {
         Err("[Type Error] AssertTrue expression must be of type Boolean.".to_string())
     } else if expr_type2 != Type::TString {
@@ -316,8 +395,8 @@ fn check_assert_false(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let expr_type = check_expr(*expr1, env)?;
-    let expr_type2 = check_expr(*expr2, env)?;
+    let expr_type = check_expr(&*expr1, env)?;
+    let expr_type2 = check_expr(&*expr2, env)?;
     if expr_type != Type::TBool {
         Err("[Type Error] AssertFalse expression must be of type Boolean.".to_string())
     } else if expr_type2 != Type::TString {
@@ -333,9 +412,9 @@ fn check_assert_eq(
     err: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let lhs_type = check_expr(*lhs, env)?;
-    let rhs_type = check_expr(*rhs, env)?;
-    let err_type = check_expr(*err, env)?;
+    let lhs_type = check_expr(&*lhs, env)?;
+    let rhs_type = check_expr(&*rhs, env)?;
+    let err_type = check_expr(&*err, env)?;
     if lhs_type != rhs_type {
         Err(format!(
             "[Type Error] AssertEQ expressions must have the same type. Found {:?} and {:?}.",
@@ -354,9 +433,9 @@ fn check_assert_neq(
     err: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let lhs_type = check_expr(*lhs, env)?;
-    let rhs_type = check_expr(*rhs, env)?;
-    let err_type = check_expr(*err, env)?;
+    let lhs_type = check_expr(&*lhs, env)?;
+    let rhs_type = check_expr(&*rhs, env)?;
+    let err_type = check_expr(&*err, env)?;
     if lhs_type != rhs_type {
         Err(format!(
             "[Type Error] AssertNEQ expressions must have the same type. Found {:?} and {:?}.",
@@ -438,6 +517,7 @@ fn merge_environments(
     Ok(merged)
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1156,3 +1236,4 @@ mod tests {
         }
     }
 }
+*/

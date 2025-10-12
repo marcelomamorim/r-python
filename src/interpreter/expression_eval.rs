@@ -1,6 +1,7 @@
 use super::statement_execute::Computation;
-use crate::environment::environment::Environment;
-use crate::ir::ast::{Expression, Name};
+use crate::environment::environment::{Environment, FuncOrVar};
+use crate::ir::ast::{Expression, FuncSignature, Name, Type};
+use crate::type_checker::check_expr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ExpressionResult {
@@ -32,6 +33,7 @@ pub fn eval(exp: Expression, env: &Environment<Expression>) -> Result<Expression
         Expression::IsError(e) => eval_iserror_expression(*e, env),
         Expression::IsNothing(e) => eval_isnothing_expression(*e, env),
         Expression::FuncCall(name, args) => eval_function_call(name, args, env),
+        Expression::Lambda(func) => Ok(ExpressionResult::Value(Expression::Lambda(func))),
         Expression::ListValue(values) => eval_list_value(values, env),
         Expression::Tuple(values) => eval_tuple_value(values, env),
         _ if is_constant(exp.clone()) => Ok(ExpressionResult::Value(exp)),
@@ -384,45 +386,99 @@ pub fn eval_lookup(
 
 // Function call
 pub fn eval_function_call(
-    name: Name,
+    func_name: Name,
     args: Vec<Expression>,
     env: &Environment<Expression>,
 ) -> Result<ExpressionResult, String> {
-    match env.lookup_function(&name) {
-        Some(function_definition) => {
-            let mut new_env = Environment::new();
+    let mut actual_arg_values = Vec::new();
+    let mut actual_arg_types = Vec::new();
 
-            if args.len() != function_definition.params.len() {
-                return Err(format!(
-                    "[Runtime Error] Invalid number of arguments for '{}'.",
-                    name
-                ));
-            }
+    for arg in args.iter() {
+        match arg {
+            Expression::Var(name) => match env.lookup_var_or_func(name) {
+                Some(FuncOrVar::Var((_, value))) => {
+                    actual_arg_values.push(value.clone());
+                }
+                Some(FuncOrVar::Func(func)) => {
+                    actual_arg_values.push(Expression::Lambda(func));
+                }
+                None => {
+                    return Err(format!("Identifier '{}' was never declared", name));
+                }
+            },
+            _ => match eval(arg.clone(), env)? {
+                ExpressionResult::Value(expr) => {
+                    actual_arg_values.push(expr);
+                }
+                ExpressionResult::Propagate(expr) => {
+                    return Ok(ExpressionResult::Propagate(expr));
+                }
+            },
+        }
+    }
 
-            new_env.push();
+    let type_env = Environment::<Type>::new();
+    for value in actual_arg_values.iter() {
+        actual_arg_types.push(check_expr(value, &type_env)?);
+    }
 
-            for (formal, actual) in function_definition.params.iter().zip(args.iter()) {
-                let value = match eval(actual.clone(), env)? {
-                    ExpressionResult::Value(expr) => expr,
-                    ExpressionResult::Propagate(expr) => {
-                        return Ok(ExpressionResult::Propagate(expr))
-                    }
-                };
-                new_env.map_variable(formal.argument_name.clone(), false, value);
-            }
+    let func_signature = FuncSignature {
+        name: func_name.clone(),
+        argument_types: actual_arg_types.clone(),
+    };
 
-            // Execute the body of the function.
-            match super::statement_execute::execute(
-                *function_definition.body.as_ref().unwrap().clone(),
-                &new_env,
-            ) {
-                Ok(Computation::Continue(_)) => Err("Function did not return a value".to_string()),
-                Ok(Computation::Return(value, _)) => Ok(ExpressionResult::Value(value)),
-                Ok(Computation::PropagateError(value, _)) => Ok(ExpressionResult::Propagate(value)),
-                Err(e) => Err(e),
+    let func = match env.lookup_function(&func_signature).cloned() {
+        Some(function_definition) => function_definition,
+        None => {
+            return Err(format!("Function '{}' not found", func_signature));
+        }
+    };
+
+    if func.params.len() != actual_arg_values.len() {
+        return Err(format!(
+            "[Runtime Error] Invalid number of arguments for '{}'.",
+            func_signature
+        ));
+    }
+
+    let mut new_env = Environment::new();
+    new_env.set_current_func(&func_signature);
+    new_env.set_global_functions(env.get_all_functions());
+    new_env.push();
+
+    for (formal_arg, value) in func.params.iter().zip(actual_arg_values.iter()) {
+        match &formal_arg.argument_type {
+            Type::TFunction(_, _) => match value {
+                Expression::Lambda(arg_func) => {
+                    let mut inner_func = arg_func.clone();
+                    inner_func.name = formal_arg.argument_name.clone();
+                    new_env.map_function(inner_func);
+                }
+                _ => {
+                    return Err(format!(
+                        "[Runtime Error] Function {} expected a functional argument for parameter '{}'.",
+                        func_signature,
+                        formal_arg.argument_name
+                    ));
+                }
+            },
+            _ => {
+                new_env.map_variable(formal_arg.argument_name.clone(), false, value.clone());
             }
         }
-        _ => Err(format!("Function {} not found", name)),
+    }
+
+    match func.body.clone() {
+        Some(body) => match super::statement_execute::execute(*body, &new_env) {
+            Ok(Computation::Continue(_)) => Err("Function did not return a value".to_string()),
+            Ok(Computation::Return(value, _final_env)) => Ok(ExpressionResult::Value(value)),
+            Ok(Computation::PropagateError(value, _)) => Ok(ExpressionResult::Propagate(value)),
+            Err(e) => Err(e),
+        },
+        None => Err(format!(
+            "Function '{}' has no executable body",
+            func_signature
+        )),
     }
 }
 

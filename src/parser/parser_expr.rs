@@ -5,25 +5,32 @@ use nom::{
     combinator::{map, map_res, opt, value, verify},
     error::Error,
     multi::{fold_many0, separated_list0},
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded, terminated, tuple},
     IResult,
 };
 
 use std::str::FromStr;
 
-use crate::ir::ast::Expression;
+use crate::ir::ast::{Expression, Function, Statement};
 use crate::parser::parser_common::{
     identifier,
     is_string_char,
     keyword,
+    COLON_CHAR,
     // Other character constants
     COMMA_CHAR,
+    END_KEYWORD,
+    // Other symbols
+    FUNCTION_ARROW,
+    LAMBDA_KEYWORD,
     // Bracket and parentheses constants
     LEFT_BRACKET,
     LEFT_PAREN,
     RIGHT_BRACKET,
     RIGHT_PAREN,
 };
+use crate::parser::parser_stmt::{parse_formal_argument, parse_return_statement};
+use crate::parser::parser_type::parse_type;
 
 pub fn parse_expression(input: &str) -> IResult<&str, Expression> {
     parse_or(input)
@@ -111,14 +118,52 @@ fn parse_term(input: &str) -> IResult<&str, Expression> {
 
 fn parse_factor(input: &str) -> IResult<&str, Expression> {
     alt((
-        parse_bool,
-        parse_number,
-        parse_string,
+        parse_literal_expression,
         parse_list,
         parse_function_call,
         parse_var,
+        parse_lambda,
         parse_paren_or_tuple,
     ))(input)
+}
+
+pub fn parse_literal_expression(input: &str) -> IResult<&str, Expression> {
+    alt((parse_bool, parse_number, parse_string))(input)
+}
+
+pub fn parse_lambda(input: &str) -> IResult<&str, Expression> {
+    map(
+        tuple((
+            preceded(keyword(LAMBDA_KEYWORD), multispace0),
+            delimited(
+                char::<&str, Error<&str>>(LEFT_PAREN),
+                separated_list0(
+                    tuple((
+                        multispace0,
+                        char::<&str, Error<&str>>(COMMA_CHAR),
+                        multispace0,
+                    )),
+                    terminated(parse_formal_argument, multispace0),
+                ),
+                char::<&str, Error<&str>>(RIGHT_PAREN),
+            ),
+            preceded(multispace0, tag(FUNCTION_ARROW)),
+            delimited(
+                multispace0,
+                parse_type,
+                char::<&str, Error<&str>>(COLON_CHAR),
+            ),
+            delimited(multispace0, parse_return_statement, keyword(END_KEYWORD)),
+        )),
+        |(_, args, _, t, return_stmt)| {
+            Expression::Lambda(Function {
+                name: "".to_string(),
+                kind: t,
+                params: args,
+                body: Some(Box::new(Statement::Block(vec![return_stmt]))),
+            })
+        },
+    )(input)
 }
 
 // Parses either a parenthesized expression or a tuple literal.
@@ -443,5 +488,53 @@ mod tests {
         } else {
             panic!("Expected ListValue expression");
         }
+    }
+
+    #[test]
+    fn test_parse_literal_expression_bool() {
+        assert_eq!(
+            parse_literal_expression("True"),
+            Ok(("", Expression::CTrue))
+        );
+        assert_eq!(
+            parse_literal_expression("False"),
+            Ok(("", Expression::CFalse))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_int() {
+        assert_eq!(
+            parse_literal_expression("42"),
+            Ok(("", Expression::CInt(42)))
+        );
+        assert_eq!(
+            parse_literal_expression("-7"),
+            Ok(("", Expression::CInt(-7)))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_real() {
+        assert_eq!(
+            parse_literal_expression("3.14"),
+            Ok(("", Expression::CReal(3.14)))
+        );
+        assert_eq!(
+            parse_literal_expression("-0.5"),
+            Ok(("", Expression::CReal(-0.5)))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_string() {
+        assert_eq!(
+            parse_literal_expression("\"abc\""),
+            Ok(("", Expression::CString("abc".to_string())))
+        );
+        assert_eq!(
+            parse_literal_expression("\"\""),
+            Ok(("", Expression::CString("".to_string())))
+        );
     }
 }

@@ -1,7 +1,7 @@
 // src/pretty_print/pretty_type.rs
 
 use super::pretty_print::{concat, group, hardline, line, nest, nil, text, Doc, ToDoc};
-use crate::ir::ast::{Type, ValueConstructor};
+use crate::ir::ast::Type;
 use std::rc::Rc;
 
 /// Função auxiliar para juntar uma lista de documentos (`Vec<Rc<Doc>>`)
@@ -43,6 +43,11 @@ impl ToDoc for Type {
                 ),
             ),
 
+            Type::TUnion(types) => {
+                let docs = types.iter().map(|t| t.to_doc()).collect();
+                concat(text("Union["), concat(join(text(", "), docs), text("]")))
+            }
+
             // A formatação de tipos de função usa `group` para um layout flexível.
             Type::TFunction(ret, params) => {
                 let params_docs = params.iter().map(|p| p.to_doc()).collect();
@@ -57,17 +62,19 @@ impl ToDoc for Type {
                     ),
                 ));
 
-                let ret_doc = match ret.as_ref() {
-                    Some(rt) => rt.to_doc(),
-                    None => text("Unit"), // Retorno padrão se não especificado.
-                };
+                let ret_doc = ret.to_doc();
 
                 concat(params_doc, concat(text(" -> "), ret_doc))
             }
 
             // Formata a declaração de um Tipo de Dado Algébrico (ADT).
             Type::TAlgebraicData(name, constructors) => {
-                let ctors_docs = constructors.iter().map(|c| c.to_doc()).collect();
+                let mut ctor_docs = Vec::new();
+                let mut entries: Vec<(&String, &Vec<Type>)> = constructors.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                for (ctor_name, ctor_types) in entries {
+                    ctor_docs.push(constructor_to_doc(ctor_name, ctor_types));
+                }
                 concat(
                     text("data "),
                     concat(
@@ -77,7 +84,7 @@ impl ToDoc for Type {
                             // Usa `hardline` para garantir que os construtores fiquem em novas linhas
                             // e `nest` para indentá-los.
                             concat(
-                                nest(4, concat(hardline(), join(hardline(), ctors_docs))),
+                                nest(4, concat(hardline(), join(hardline(), ctor_docs))),
                                 concat(hardline(), text("end")),
                             ),
                         ),
@@ -88,27 +95,22 @@ impl ToDoc for Type {
     }
 }
 
-/// Implementa a conversão de um `ValueConstructor` (um construtor de um ADT) para `Doc`.
-impl ToDoc for ValueConstructor {
-    fn to_doc(&self) -> Rc<Doc> {
-        // Inicia com o nome do construtor, precedido por "|".
-        let name_doc = concat(text("| "), text(self.name.clone()));
-        // Se não houver tipos associados, retorna apenas o nome.
-        if self.types.is_empty() {
-            return name_doc;
-        }
-
-        // Se houver tipos, formata-os separados por espaços.
-        let types_docs: Vec<Rc<Doc>> = self.types.iter().map(|t| t.to_doc()).collect();
-        concat(name_doc, concat(text(" "), join(text(" "), types_docs)))
+fn constructor_to_doc(name: &str, types: &[Type]) -> Rc<Doc> {
+    let name_doc = concat(text("| "), text(name.to_string()));
+    if types.is_empty() {
+        return name_doc;
     }
+
+    let types_docs: Vec<Rc<Doc>> = types.iter().map(|t| t.to_doc()).collect();
+    concat(name_doc, concat(text(" "), join(text(" "), types_docs)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::ast::{Type, ValueConstructor};
+    use crate::ir::ast::Type;
     use crate::pretty_print::pretty;
+    use std::collections::HashMap;
 
     #[test]
     fn test_basic_type_doc() {
@@ -128,7 +130,7 @@ mod tests {
     #[test]
     fn test_function_type_layout() {
         let func_type = Type::TFunction(
-            Box::new(Some(Type::TString)),
+            Box::new(Type::TString),
             vec![
                 Type::TInteger,
                 Type::TList(Box::new(Type::TBool)),
@@ -146,16 +148,13 @@ mod tests {
 
     #[test]
     fn test_adt_layout() {
-        let adt = Type::TAlgebraicData(
-            "MyList".to_string(),
-            vec![
-                ValueConstructor::new(
-                    "Cons".to_string(),
-                    vec![Type::TInteger, Type::TList(Box::new(Type::TInteger))],
-                ),
-                ValueConstructor::new("Nil".to_string(), vec![]),
-            ],
+        let mut constructors: HashMap<_, _> = HashMap::new();
+        constructors.insert(
+            "Cons".to_string(),
+            vec![Type::TInteger, Type::TList(Box::new(Type::TInteger))],
         );
+        constructors.insert("Nil".to_string(), vec![]);
+        let adt = Type::TAlgebraicData("MyList".to_string(), constructors);
         let doc = adt.to_doc();
 
         let expected = "data MyList:\n    | Cons Int [Int]\n    | Nil\nend";
