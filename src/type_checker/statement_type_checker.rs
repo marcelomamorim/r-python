@@ -1,6 +1,7 @@
 use crate::environment::environment::Environment;
-use crate::ir::ast::{Expression, Function, Name, Statement, Type, ValueConstructor};
+use crate::ir::ast::{Expression, Function, Name, Statement, Type};
 use crate::type_checker::expression_type_checker::check_expr;
+use std::collections::HashMap;
 
 type ErrorMessage = String;
 
@@ -67,7 +68,7 @@ fn check_assignment_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let exp_type = check_expr(*exp, &new_env)?;
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     match new_env.lookup(&name) {
         Some((mutable, var_type)) => {
@@ -96,7 +97,7 @@ fn check_var_declaration_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     let var_type = new_env.lookup(&name);
-    let exp_type = check_expr(*exp, &new_env)?;
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     if var_type.is_none() {
         new_env.map_variable(name.clone(), true, exp_type);
@@ -116,7 +117,7 @@ fn check_val_declaration_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     let var_type = new_env.lookup(&name);
-    let exp_type = check_expr(*exp, &new_env)?;
+    let exp_type = check_expr(&*exp, &new_env)?;
 
     if var_type.is_none() {
         new_env.map_variable(name.clone(), false, exp_type);
@@ -136,7 +137,7 @@ fn check_if_then_else_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let cond_type = check_expr(*cond, &new_env)?;
+    let cond_type = check_expr(&*cond, &new_env)?;
     if cond_type != Type::TBool {
         return Err(
             "[Type Error] a condition in a 'if' statement must be of type boolean.".to_string(),
@@ -158,7 +159,7 @@ fn check_while_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let cond_type = check_expr(*cond, &new_env)?;
+    let cond_type = check_expr(&*cond, &new_env)?;
     if cond_type != Type::TBool {
         return Err(
             "[Type Error] a condition in a 'while' statement must be of type boolean.".to_string(),
@@ -198,7 +199,7 @@ fn check_for_stmt(
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
     // Avaliar o tipo da expressão iterável
-    let expr_type = check_expr(*expr, &new_env)?;
+    let expr_type = check_expr(&*expr, &new_env)?;
 
     // Determinar o tipo do elemento
     let element_type = get_iterable_element_type(&expr_type)?;
@@ -251,7 +252,7 @@ fn check_func_def_stmt(
 
 fn check_adt_declarations_stmt(
     name: Name,
-    cons: Vec<ValueConstructor>,
+    cons: HashMap<Name, Vec<Type>>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
@@ -267,7 +268,7 @@ fn check_return_stmt(
 
     assert!(new_env.scoped_function());
 
-    let ret_type = check_expr(*exp, &new_env)?;
+    let ret_type = check_expr(&*exp, &new_env)?;
 
     match new_env.lookup(&"return".to_string()) {
         Some(_) => Ok(new_env),
@@ -283,8 +284,8 @@ fn check_assert(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let type1 = check_expr(*expr1, env)?;
-    let type2 = check_expr(*expr2, env)?;
+    let type1 = check_expr(&*expr1, env)?;
+    let type2 = check_expr(&*expr2, env)?;
 
     if type1 != Type::TBool {
         Err("[Type Error] First Assert expression must be of type Boolean.".to_string())
@@ -300,8 +301,8 @@ fn check_assert_true(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let expr_type = check_expr(*expr1, env)?;
-    let expr_type2 = check_expr(*expr2, env)?;
+    let expr_type = check_expr(&*expr1, env)?;
+    let expr_type2 = check_expr(&*expr2, env)?;
     if expr_type != Type::TBool {
         Err("[Type Error] AssertTrue expression must be of type Boolean.".to_string())
     } else if expr_type2 != Type::TString {
@@ -316,8 +317,8 @@ fn check_assert_false(
     expr2: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let expr_type = check_expr(*expr1, env)?;
-    let expr_type2 = check_expr(*expr2, env)?;
+    let expr_type = check_expr(&*expr1, env)?;
+    let expr_type2 = check_expr(&*expr2, env)?;
     if expr_type != Type::TBool {
         Err("[Type Error] AssertFalse expression must be of type Boolean.".to_string())
     } else if expr_type2 != Type::TString {
@@ -333,9 +334,9 @@ fn check_assert_eq(
     err: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let lhs_type = check_expr(*lhs, env)?;
-    let rhs_type = check_expr(*rhs, env)?;
-    let err_type = check_expr(*err, env)?;
+    let lhs_type = check_expr(&*lhs, env)?;
+    let rhs_type = check_expr(&*rhs, env)?;
+    let err_type = check_expr(&*err, env)?;
     if lhs_type != rhs_type {
         Err(format!(
             "[Type Error] AssertEQ expressions must have the same type. Found {:?} and {:?}.",
@@ -354,9 +355,9 @@ fn check_assert_neq(
     err: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let lhs_type = check_expr(*lhs, env)?;
-    let rhs_type = check_expr(*rhs, env)?;
-    let err_type = check_expr(*err, env)?;
+    let lhs_type = check_expr(&*lhs, env)?;
+    let rhs_type = check_expr(&*rhs, env)?;
+    let err_type = check_expr(&*err, env)?;
     if lhs_type != rhs_type {
         Err(format!(
             "[Type Error] AssertNEQ expressions must have the same type. Found {:?} and {:?}.",

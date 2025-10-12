@@ -1,7 +1,7 @@
 // src/pretty_print/pretty_statements.rs
 
 use super::pretty_print::{concat, group, hardline, line, nest, nil, text, Doc, ToDoc};
-use crate::ir::ast::{FormalArgument, Function, Statement};
+use crate::ir::ast::{FormalArgument, Function, Statement, Type};
 use std::rc::Rc;
 
 /// Função auxiliar para juntar uma lista de documentos (`Vec<Rc<Doc>>`)
@@ -177,17 +177,18 @@ impl ToDoc for Statement {
 
             // Declaração de tipo (ADT) como bloco.
             Statement::TypeDeclaration(name, ctors) => {
-                let ctor_docs: Vec<Rc<Doc>> = ctors
-                    .iter()
-                    .map(|c| {
-                        // "| Nome t1 t2"
-                        let types_docs: Vec<Rc<Doc>> = c.types.iter().map(|t| t.to_doc()).collect();
+                let mut entries: Vec<(&String, &Vec<Type>)> = ctors.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                let ctor_docs: Vec<Rc<Doc>> = entries
+                    .into_iter()
+                    .map(|(ctor_name, types)| {
+                        let types_docs: Vec<Rc<Doc>> = types.iter().map(|t| t.to_doc()).collect();
                         let tail = if types_docs.is_empty() {
                             nil()
                         } else {
                             concat(text(" "), join(text(" "), types_docs))
                         };
-                        concat(text("| "), concat(text(c.name.clone()), tail))
+                        concat(text("| "), concat(text(ctor_name.clone()), tail))
                     })
                     .collect();
                 concat(
@@ -214,6 +215,31 @@ impl ToDoc for Statement {
                 text("modtest "),
                 concat(text(module.clone()), concat(text(" "), stmt.to_doc())),
             ),
+            Statement::Match(expr, arms) => {
+                let arm_docs: Vec<Rc<Doc>> = arms
+                    .iter()
+                    .map(|(pattern, stmt)| {
+                        concat(
+                            pattern.to_doc(),
+                            concat(text(" => "), stmt.to_doc()),
+                        )
+                    })
+                    .collect();
+
+                concat(
+                    text("match "),
+                    concat(
+                        expr.to_doc(),
+                        concat(
+                            text(" {"),
+                            concat(
+                                nest(4, concat(hardline(), join(hardline(), arm_docs))),
+                                concat(hardline(), text("}")),
+                            ),
+                        ),
+                    ),
+                )
+            }
         }
     }
 }
@@ -307,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_assert_variants_and_type_declaration() {
-        use crate::ir::ast::{Type, ValueConstructor};
+        use std::collections::HashMap;
         let stmt = Statement::Sequence(
             Box::new(Statement::AssertTrue(
                 Box::new(Expression::Var("flag".into())),
@@ -322,19 +348,10 @@ mod tests {
         assert!(printed.contains("assert_true(flag, \"ok\");"));
         assert!(printed.contains("assert_false(flag, \"fail\");"));
 
-        let td = Statement::TypeDeclaration(
-            "Opt".into(),
-            vec![
-                ValueConstructor {
-                    name: "Some".into(),
-                    types: vec![Type::TInteger],
-                },
-                ValueConstructor {
-                    name: "None".into(),
-                    types: vec![],
-                },
-            ],
-        );
+        let mut constructors: HashMap<_, _> = HashMap::new();
+        constructors.insert("Some".into(), vec![Type::TInteger]);
+        constructors.insert("None".into(), vec![]);
+        let td = Statement::TypeDeclaration("Opt".into(), constructors);
         let td_printed = pretty(120, &td.to_doc());
         assert!(td_printed.starts_with("type Opt:"));
         assert!(td_printed.contains("| Some Int"));
