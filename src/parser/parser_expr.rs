@@ -111,14 +111,16 @@ fn parse_term(input: &str) -> IResult<&str, Expression> {
 
 fn parse_factor(input: &str) -> IResult<&str, Expression> {
     alt((
-        parse_bool,
-        parse_number,
-        parse_string,
+        parse_literal_expression,
         parse_list,
         parse_function_call,
         parse_var,
         parse_paren_or_tuple,
     ))(input)
+}
+
+pub fn parse_literal_expression(input: &str) -> IResult<&str, Expression> {
+    alt((parse_bool, parse_number, parse_string))(input)
 }
 
 // Parses either a parenthesized expression or a tuple literal.
@@ -443,5 +445,53 @@ mod tests {
         } else {
             panic!("Expected ListValue expression");
         }
+    }
+
+    #[test]
+    fn test_parse_literal_expression_bool() {
+        assert_eq!(
+            parse_literal_expression("True"),
+            Ok(("", Expression::CTrue))
+        );
+        assert_eq!(
+            parse_literal_expression("False"),
+            Ok(("", Expression::CFalse))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_int() {
+        assert_eq!(
+            parse_literal_expression("42"),
+            Ok(("", Expression::CInt(42)))
+        );
+        assert_eq!(
+            parse_literal_expression("-7"),
+            Ok(("", Expression::CInt(-7)))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_real() {
+        assert_eq!(
+            parse_literal_expression("3.14"),
+            Ok(("", Expression::CReal(3.14)))
+        );
+        assert_eq!(
+            parse_literal_expression("-0.5"),
+            Ok(("", Expression::CReal(-0.5)))
+        );
+    }
+
+    #[test]
+    fn test_parse_literal_expression_string() {
+        assert_eq!(
+            parse_literal_expression("\"abc\""),
+            Ok(("", Expression::CString("abc".to_string())))
+        );
+        assert_eq!(
+            parse_literal_expression("\"\""),
+            Ok(("", Expression::CString("".to_string())))
+        );
     }
 }

@@ -1,4 +1,5 @@
 pub mod keywords;
+pub mod parse_pattern;
 pub mod parser_common;
 pub mod parser_expr;
 pub mod parser_stmt;
@@ -14,6 +15,7 @@ use nom::{
 use crate::ir::ast::Statement;
 use crate::parser::parser_common::SEMICOLON_CHAR;
 
+pub use parse_pattern::parse_pattern_argument;
 pub use parser_expr::parse_expression;
 pub use parser_stmt::parse_statement;
 pub use parser_type::parse_type;

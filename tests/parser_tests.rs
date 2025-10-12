@@ -416,6 +416,7 @@ mod statement_tests {
 // ADT Tests
 mod adt_tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     #[ignore]
@@ -423,13 +424,13 @@ mod adt_tests {
         let input = "data Shape = Circle Int | Rectangle Int Int";
         let expected = Statement::TypeDeclaration(
             "Shape".to_string(),
-            vec![
-                ValueConstructor::new("Circle".to_string(), vec![Type::TInteger]),
-                ValueConstructor::new(
+            HashMap::from([
+                ("Circle".to_string(), vec![Type::TInteger]),
+                (
                     "Rectangle".to_string(),
                     vec![Type::TInteger, Type::TInteger],
                 ),
-            ],
+            ]),
         );
 
         let (rest, result) = parse_statement(input).unwrap();
