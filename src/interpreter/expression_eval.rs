@@ -1,5 +1,5 @@
 use super::statement_execute::Computation;
-use crate::environment::environment::{Environment, FuncOrVar};
+use crate::environment::environment::{Environment, FuncOrVar, FunctionResolutionError};
 use crate::ir::ast::{Expression, FuncSignature, Name, Type};
 use crate::type_checker::check_expr;
 
@@ -406,6 +406,9 @@ pub fn eval_function_call(
                     return Err(format!("Identifier '{}' was never declared", name));
                 }
             },
+            Expression::Lambda(func) => {
+                actual_arg_values.push(Expression::Lambda(func.clone()));
+            }
             _ => match eval(arg.clone(), env)? {
                 ExpressionResult::Value(expr) => {
                     actual_arg_values.push(expr);
@@ -422,24 +425,26 @@ pub fn eval_function_call(
         actual_arg_types.push(check_expr(value, &type_env)?);
     }
 
-    let func_signature = FuncSignature {
-        name: func_name.clone(),
-        argument_types: actual_arg_types.clone(),
-    };
-
-    let func = match env.lookup_function(&func_signature).cloned() {
-        Some(function_definition) => function_definition,
-        None => {
-            return Err(format!("Function '{}' not found", func_signature));
+    let func = match env.resolve_function(&func_name, &actual_arg_types) {
+        Ok(function_definition) => function_definition,
+        Err(FunctionResolutionError::NotFound { .. }) => {
+            return Err(format!("Function '{}' not found", func_name));
+        }
+        Err(FunctionResolutionError::NoMatchingOverload { provided, .. })
+        | Err(FunctionResolutionError::Ambiguous { provided, .. }) => {
+            return Err(format!(
+                "Function '{}' cannot be called with arguments of types ({}).",
+                func_name,
+                provided
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
     };
 
-    if func.params.len() != actual_arg_values.len() {
-        return Err(format!(
-            "[Runtime Error] Invalid number of arguments for '{}'.",
-            func_signature
-        ));
-    }
+    let func_signature = FuncSignature::from_func(&func);
 
     let mut new_env = Environment::new();
     new_env.set_current_func(&func_signature);

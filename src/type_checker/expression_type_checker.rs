@@ -1,5 +1,5 @@
-use crate::environment::environment::{Environment, FuncOrVar};
-use crate::ir::ast::{Expression, FuncSignature, Function, Name, Type};
+use crate::environment::environment::{Environment, FuncOrVar, FunctionResolutionError};
+use crate::ir::ast::{Expression, Function, Name, Type};
 use std::sync::Arc;
 
 type ErrorMessage = String;
@@ -85,40 +85,37 @@ fn check_func_call(
         }
     }
 
-    let func_signature = FuncSignature {
-        name: func_name.clone(),
-        argument_types: actual_arg_types.clone(),
-    };
-
-    let func = env.lookup_function(&func_signature).ok_or_else(|| {
-        format!(
-            "Function '{}' was called but never declared",
-            func_signature
-        )
-    })?;
-
-    if func.params.len() != actual_arg_types.len() {
-        return Err(format!(
-            "Mismatched arity in function '{}' call. Expected {} argument(s), received {}.",
-            func_signature,
-            func.params.len(),
-            actual_arg_types.len()
-        ));
-    }
-
-    let mut formal_arg_types = Vec::new();
-    for param in func.params.iter() {
-        formal_arg_types.push(param.argument_type.clone());
-    }
-
-    for (formal_type, actual_type) in formal_arg_types.iter().zip(actual_arg_types.iter()) {
-        if formal_type != actual_type {
+    let func = match env.resolve_function(func_name, &actual_arg_types) {
+        Ok(function_definition) => function_definition,
+        Err(FunctionResolutionError::NotFound { .. }) => {
             return Err(format!(
-                "Mismatched types in function '{}' call.\nExpected: {:?}\nReceived: {:?}",
-                func_signature, formal_arg_types, actual_arg_types
+                "[Name Error] Function '{}' is not defined in the current scope.",
+                func_name
             ));
         }
-    }
+        Err(FunctionResolutionError::NoMatchingOverload { provided, .. }) => {
+            return Err(format!(
+                "[Type Error] Function '{}' cannot be called with arguments of types ({}).",
+                func_name,
+                provided
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        Err(FunctionResolutionError::Ambiguous { provided, .. }) => {
+            return Err(format!(
+                "[Type Error] Call to function '{}' with arguments of types ({}) is ambiguous.",
+                func_name,
+                provided
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    };
 
     Ok(func.kind.clone())
 }
@@ -397,8 +394,8 @@ mod tests {
     use super::*;
     use crate::environment::environment::Environment;
     use crate::ir::ast::Expression::*;
-    use crate::ir::ast::Type;
     use crate::ir::ast::Type::*;
+    use crate::ir::ast::{FormalArgument, Function, Type};
     use std::collections::HashMap;
 
     #[test]
@@ -769,5 +766,78 @@ mod tests {
         );
         let result = check_expr(&circle, &env);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_function_call_with_any_parameter() {
+        let mut env = Environment::new();
+
+        let identity_any = Function {
+            name: "identity".to_string(),
+            kind: Type::TInteger,
+            params: vec![FormalArgument::new("value".to_string(), Type::TAny)],
+            body: None,
+        };
+        env.map_function(identity_any);
+
+        let call = Expression::FuncCall("identity".to_string(), vec![Expression::CInt(10)]);
+
+        assert_eq!(check_expr(&call, &env), Ok(Type::TInteger));
+    }
+
+    #[test]
+    fn check_function_call_prefers_specific_over_any() {
+        let mut env = Environment::new();
+
+        let generic = Function {
+            name: "foo".to_string(),
+            kind: Type::TInteger,
+            params: vec![FormalArgument::new("x".to_string(), Type::TAny)],
+            body: None,
+        };
+
+        let specific = Function {
+            name: "foo".to_string(),
+            kind: Type::TInteger,
+            params: vec![FormalArgument::new("x".to_string(), Type::TInteger)],
+            body: None,
+        };
+
+        env.map_function(generic);
+        env.map_function(specific);
+
+        let call = Expression::FuncCall("foo".to_string(), vec![Expression::CInt(1)]);
+
+        assert_eq!(check_expr(&call, &env), Ok(Type::TInteger));
+    }
+
+    #[test]
+    fn check_function_call_ambiguous_when_argument_type_unknown() {
+        let mut env = Environment::new();
+
+        let int_version = Function {
+            name: "bar".to_string(),
+            kind: Type::TInteger,
+            params: vec![FormalArgument::new("x".to_string(), Type::TInteger)],
+            body: None,
+        };
+
+        let bool_version = Function {
+            name: "bar".to_string(),
+            kind: Type::TBool,
+            params: vec![FormalArgument::new("x".to_string(), Type::TBool)],
+            body: None,
+        };
+
+        env.map_function(int_version);
+        env.map_function(bool_version);
+        env.map_variable("value".to_string(), false, Type::TAny);
+
+        let call = Expression::FuncCall(
+            "bar".to_string(),
+            vec![Expression::Var("value".to_string())],
+        );
+
+        assert!(matches!(check_expr(&call, &env), Err(message) if message.contains("ambiguous")));
     }
 }

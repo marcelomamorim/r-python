@@ -5,6 +5,7 @@ use crate::ir::ast::Type;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::collections::LinkedList;
+use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -80,6 +81,19 @@ impl<A: Clone> Scope<A> {
                 None
             }
         })
+    }
+
+    fn functions_named(&self, name: &Name) -> Vec<Function> {
+        self.functions
+            .iter()
+            .filter_map(|(signature, function)| {
+                if &signature.name == name {
+                    Some(function.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn lookup_test(&self, name: &Name) -> Option<&Function> {
@@ -288,12 +302,144 @@ impl<A: Clone + Debug> Environment<A> {
         }
         all_functions
     }
+
+    pub fn resolve_function(
+        &self,
+        name: &Name,
+        arg_types: &[Type],
+    ) -> Result<Function, FunctionResolutionError> {
+        for scope in &self.stack {
+            let candidates = scope.functions_named(name);
+            if !candidates.is_empty() {
+                return select_candidate(name, candidates, arg_types);
+            }
+        }
+
+        let candidates = self.globals.functions_named(name);
+        if !candidates.is_empty() {
+            return select_candidate(name, candidates, arg_types);
+        }
+
+        Err(FunctionResolutionError::NotFound { name: name.clone() })
+    }
+}
+
+fn select_candidate(
+    name: &Name,
+    candidates: Vec<Function>,
+    arg_types: &[Type],
+) -> Result<Function, FunctionResolutionError> {
+    let mut best: Option<(Function, (usize, usize))> = None;
+
+    for candidate in candidates.into_iter() {
+        if candidate.params.len() != arg_types.len() {
+            continue;
+        }
+
+        let mut exact_matches = 0usize;
+        let mut wildcard_penalty = 0usize;
+        let mut compatible = true;
+
+        for (formal, actual) in candidate.params.iter().zip(arg_types.iter()) {
+            if formal.argument_type == *actual {
+                exact_matches += 1;
+            } else if formal.argument_type == Type::TAny {
+                wildcard_penalty += 1;
+            } else if *actual == Type::TAny {
+                wildcard_penalty += 2;
+            } else {
+                compatible = false;
+                break;
+            }
+        }
+
+        if !compatible {
+            continue;
+        }
+
+        let candidate_score = (exact_matches, wildcard_penalty);
+
+        match &mut best {
+            Some((_, best_score))
+                if candidate_score.0 == best_score.0 && candidate_score.1 == best_score.1 =>
+            {
+                return Err(FunctionResolutionError::Ambiguous {
+                    name: name.clone(),
+                    provided: arg_types.to_vec(),
+                });
+            }
+            Some((best_func, best_score)) => {
+                if candidate_score.0 > best_score.0
+                    || (candidate_score.0 == best_score.0 && candidate_score.1 < best_score.1)
+                {
+                    *best_func = candidate.clone();
+                    *best_score = candidate_score;
+                }
+            }
+            None => best = Some((candidate.clone(), candidate_score)),
+        }
+    }
+
+    match best {
+        Some((func, _)) => Ok(func),
+        None => Err(FunctionResolutionError::NoMatchingOverload {
+            name: name.clone(),
+            provided: arg_types.to_vec(),
+        }),
+    }
 }
 
 pub enum FuncOrVar<A: Clone + Debug> {
     Func(Function),
     Var((bool, A)),
 }
+
+#[derive(Debug, Clone)]
+pub enum FunctionResolutionError {
+    NotFound { name: Name },
+    NoMatchingOverload { name: Name, provided: Vec<Type> },
+    Ambiguous { name: Name, provided: Vec<Type> },
+}
+
+impl fmt::Display for FunctionResolutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FunctionResolutionError::NotFound { name } => {
+                write!(
+                    f,
+                    "Function '{}' is not defined in the current scope.",
+                    name
+                )
+            }
+            FunctionResolutionError::NoMatchingOverload { name, provided } => {
+                write!(
+                    f,
+                    "No overload of '{}' accepts arguments of types ({}).",
+                    name,
+                    provided
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            FunctionResolutionError::Ambiguous { name, provided } => {
+                write!(
+                    f,
+                    "Call to '{}' with arguments of types ({}) is ambiguous between multiple definitions.",
+                    name,
+                    provided
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FunctionResolutionError {}
 
 pub struct TestResult {
     pub name: Name,

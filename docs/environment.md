@@ -178,8 +178,10 @@ env.pop(); // removes outer scope
 2. All lookups traverse the entire scope chain for proper lexical scoping
 3. The generic parameter `A` must implement both `Clone` and `Debug` because
    environments frequently clone scoped values and log them during debugging.
-4. Functions are keyed by `FuncSignature`, not by name, so callers should build
-   the signature (name + argument types) before performing lookups.
+4. While functions are stored by `FuncSignature`, the helper `resolve_function`
+   can be used to resolve a call by name and a list of argument types. It
+   selects the most specific overload (preferring exact matches over `Any`
+   placeholders) and reports descriptive errors when no candidate matches.
 5. `FuncOrVar` is a small enum returned by `lookup_var_or_func` to distinguish
    between variable and function bindings when only an identifier name is known.
 6. The global scope is always accessible, regardless of the current scope depth.

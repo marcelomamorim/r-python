@@ -11,15 +11,13 @@ use nom::{
 
 use std::str::FromStr;
 
-use crate::ir::ast::{Expression, Function, Statement};
+use crate::ir::ast::{Expression, Function};
 use crate::parser::parser_common::{
     identifier,
     is_string_char,
     keyword,
-    COLON_CHAR,
     // Other character constants
     COMMA_CHAR,
-    END_KEYWORD,
     // Other symbols
     FUNCTION_ARROW,
     LAMBDA_KEYWORD,
@@ -29,7 +27,7 @@ use crate::parser::parser_common::{
     RIGHT_BRACKET,
     RIGHT_PAREN,
 };
-use crate::parser::parser_stmt::{parse_formal_argument, parse_return_statement};
+use crate::parser::parser_stmt::{parse_block, parse_formal_argument};
 use crate::parser::parser_type::parse_type;
 
 pub fn parse_expression(input: &str) -> IResult<&str, Expression> {
@@ -148,19 +146,15 @@ pub fn parse_lambda(input: &str) -> IResult<&str, Expression> {
                 char::<&str, Error<&str>>(RIGHT_PAREN),
             ),
             preceded(multispace0, tag(FUNCTION_ARROW)),
-            delimited(
-                multispace0,
-                parse_type,
-                char::<&str, Error<&str>>(COLON_CHAR),
-            ),
-            delimited(multispace0, parse_return_statement, keyword(END_KEYWORD)),
+            preceded(multispace0, parse_type),
+            parse_block,
         )),
-        |(_, args, _, t, return_stmt)| {
+        |(_, args, _, t, block)| {
             Expression::Lambda(Function {
                 name: "".to_string(),
                 kind: t,
                 params: args,
-                body: Some(Box::new(Statement::Block(vec![return_stmt]))),
+                body: Some(Box::new(block)),
             })
         },
     )(input)
@@ -332,6 +326,7 @@ fn operator<'a>(op: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::ast::{FormalArgument, Statement, Type};
 
     #[test]
     fn test_parse_expression_integer() {
@@ -536,5 +531,37 @@ mod tests {
             parse_literal_expression("\"\""),
             Ok(("", Expression::CString("".to_string())))
         );
+    }
+
+    #[test]
+    fn test_parse_lambda_with_block() {
+        let input = "lambda (x: Int) -> Int: var y = x; return y; end";
+        let expected = Expression::Lambda(Function {
+            name: "".to_string(),
+            kind: Type::TInteger,
+            params: vec![FormalArgument::new("x".to_string(), Type::TInteger)],
+            body: Some(Box::new(Statement::Block(vec![
+                Statement::VarDeclaration(
+                    "y".to_string(),
+                    Box::new(Expression::Var("x".to_string())),
+                ),
+                Statement::Return(Box::new(Expression::Var("y".to_string()))),
+            ]))),
+        });
+
+        assert_eq!(parse_lambda(input), Ok(("", expected)));
+    }
+
+    #[test]
+    fn test_parse_lambda_without_statements_defaults_to_empty_block() {
+        let input = "lambda () -> Unit: end";
+        let expected = Expression::Lambda(Function {
+            name: "".to_string(),
+            kind: Type::TVoid,
+            params: Vec::new(),
+            body: Some(Box::new(Statement::Block(Vec::new()))),
+        });
+
+        assert_eq!(parse_lambda(input), Ok(("", expected)));
     }
 }
