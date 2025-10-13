@@ -129,6 +129,15 @@ impl Expression {
                     group(concat(text("("), concat(nest(4, joined), text(")")))),
                 )
             }
+            Expression::Lambda(func) => {
+                let params = func
+                    .params
+                    .iter()
+                    .map(|arg| format!("{}: {}", arg.argument_name, arg.argument_type))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                text(format!("lambda ({}) -> {}", params, func.kind))
+            }
 
             Expression::ListValue(elements) => {
                 let elem_docs: Vec<Rc<Doc>> =

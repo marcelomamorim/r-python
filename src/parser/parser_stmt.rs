@@ -15,7 +15,7 @@ use crate::parser::parser_common::{
     identifier, keyword, ASSERTEQ_KEYWORD, ASSERTFALSE_KEYWORD, ASSERTNEQ_KEYWORD,
     ASSERTTRUE_KEYWORD, ASSERT_KEYWORD, COLON_CHAR, COMMA_CHAR, DEF_KEYWORD, ELIF_KEYWORD,
     ELSE_KEYWORD, END_KEYWORD, EQUALS_CHAR, FOR_KEYWORD, FUNCTION_ARROW, IF_KEYWORD, IN_KEYWORD,
-    LEFT_PAREN, RIGHT_PAREN, SEMICOLON_CHAR, VAL_KEYWORD, VAR_KEYWORD, WHILE_KEYWORD,
+    LEFT_PAREN, RET_KEYWORD, RIGHT_PAREN, SEMICOLON_CHAR, VAL_KEYWORD, VAR_KEYWORD, WHILE_KEYWORD,
 };
 use crate::parser::parser_expr::parse_expression;
 use crate::parser::parser_type::parse_type;
@@ -36,6 +36,7 @@ pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
         parse_asserttrue_statement,
         parse_test_function_definition_statement,
         parse_function_definition_statement,
+        parse_return_statement,
         // Fallback: generic assignment should be tried last
         parse_assignment_statement,
     ))(input)
@@ -85,6 +86,13 @@ fn parse_assignment_statement(input: &str) -> IResult<&str, Statement> {
             parse_expression,
         )),
         |(var, _, expr)| Statement::Assignment(var.to_string(), Box::new(expr)),
+    )(input)
+}
+
+pub fn parse_return_statement(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((keyword(RET_KEYWORD), multispace0, parse_expression)),
+        |(_, _, expr)| Statement::Return(Box::new(expr)),
     )(input)
 }
 
@@ -361,7 +369,7 @@ fn parse_test_function_definition_statement(input: &str) -> IResult<&str, Statem
     )(input)
 }
 
-fn parse_block(input: &str) -> IResult<&str, Statement> {
+pub fn parse_block(input: &str) -> IResult<&str, Statement> {
     map(
         tuple((
             char::<&str, Error<&str>>(COLON_CHAR),
@@ -384,7 +392,7 @@ fn parse_block(input: &str) -> IResult<&str, Statement> {
     )(input)
 }
 
-fn parse_formal_argument(input: &str) -> IResult<&str, FormalArgument> {
+pub fn parse_formal_argument(input: &str) -> IResult<&str, FormalArgument> {
     map(
         tuple((
             preceded(multispace0, identifier),

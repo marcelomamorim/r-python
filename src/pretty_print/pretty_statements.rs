@@ -219,10 +219,7 @@ impl ToDoc for Statement {
                 let arm_docs: Vec<Rc<Doc>> = arms
                     .iter()
                     .map(|(pattern, stmt)| {
-                        concat(
-                            pattern.to_doc(),
-                            concat(text(" => "), stmt.to_doc()),
-                        )
+                        concat(pattern.to_doc(), concat(text(" => "), stmt.to_doc()))
                     })
                     .collect();
 

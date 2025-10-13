@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 
 // Type alias for variable and function names
 pub type Name = String;
@@ -21,6 +23,48 @@ impl Function {
             params: Vec::new(),
             body: None,
         };
+    }
+}
+
+//Represents function signature
+#[derive(Eq, Hash, PartialEq, Debug, Clone)]
+pub struct FuncSignature {
+    pub name: Name,
+    pub argument_types: Vec<Type>,
+}
+
+impl FuncSignature {
+    pub fn new() -> FuncSignature {
+        FuncSignature {
+            name: "".to_string(),
+            argument_types: vec![],
+        }
+    }
+
+    pub fn from_func(func: &Function) -> FuncSignature {
+        FuncSignature {
+            name: func.name.clone(),
+            argument_types: func
+                .params
+                .iter()
+                .map(|arg| arg.argument_type.clone())
+                .collect(),
+        }
+    }
+}
+
+impl fmt::Display for FuncSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}({})",
+            self.name,
+            self.argument_types
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -49,7 +93,7 @@ pub enum Type {
     TReal,
     TString,
     TVoid,
-    TFunction(Box<Option<Type>>, Vec<Type>),
+    TFunction(Box<Type>, Vec<Type>),
     TList(Box<Type>),
     TTuple(Vec<Type>),
     TMaybe(Box<Type>),
@@ -57,6 +101,112 @@ pub enum Type {
     TUnion(Vec<Type>),
     TAny,
     TAlgebraicData(Name, HashMap<Name, Vec<Type>>),
+}
+
+impl Eq for Type {}
+
+impl Type {
+    fn hash_helper<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Type::TInteger => state.write_u8(0),
+            Type::TBool => state.write_u8(1),
+            Type::TReal => state.write_u8(2),
+            Type::TString => state.write_u8(3),
+            Type::TVoid => state.write_u8(4),
+            Type::TFunction(ret, params) => {
+                state.write_u8(5);
+                ret.hash(state);
+                for param in params {
+                    param.hash(state);
+                }
+            }
+            Type::TList(inner) => {
+                state.write_u8(6);
+                inner.hash(state);
+            }
+            Type::TTuple(elements) => {
+                state.write_u8(7);
+                for element in elements {
+                    element.hash(state);
+                }
+            }
+            Type::TMaybe(inner) => {
+                state.write_u8(8);
+                inner.hash(state);
+            }
+            Type::TResult(ok, err) => {
+                state.write_u8(9);
+                ok.hash(state);
+                err.hash(state);
+            }
+            Type::TUnion(types) => {
+                state.write_u8(10);
+                for ty in types {
+                    ty.hash(state);
+                }
+            }
+            Type::TAny => state.write_u8(11),
+            Type::TAlgebraicData(name, constructors) => {
+                state.write_u8(12);
+                name.hash(state);
+                let mut entries: Vec<_> = constructors.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                for (ctor_name, ctor_types) in entries {
+                    ctor_name.hash(state);
+                    for ty in ctor_types {
+                        ty.hash(state);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Hash for Type {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash_helper(state);
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::TInteger => write!(f, "int"),
+            Type::TBool => write!(f, "bool"),
+            Type::TReal => write!(f, "real"),
+            Type::TString => write!(f, "string"),
+            Type::TVoid => write!(f, "void"),
+            Type::TFunction(ret, params) => {
+                let params_str = params
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "fn({}) -> {}", params_str, ret)
+            }
+            Type::TList(inner) => write!(f, "[{}]", inner),
+            Type::TTuple(elements) => {
+                let types = elements
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", types)
+            }
+            Type::TMaybe(inner) => write!(f, "Maybe<{}>", inner),
+            Type::TResult(ok, err) => write!(f, "Result<{}, {}>", ok, err),
+            Type::TUnion(types) => {
+                let types = types
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "{}", types)
+            }
+            Type::TAny => write!(f, "any"),
+            Type::TAlgebraicData(name, _constructors) => write!(f, "{}", name),
+        }
+    }
 }
 
 // Represents expressions in the AST
@@ -104,6 +254,9 @@ pub enum Expression {
     IsError(Box<Expression>),
     IsNothing(Box<Expression>),
     Propagate(Box<Expression>),
+
+    //Lambda expression
+    Lambda(Function),
 
     // List value
     ListValue(Vec<Expression>),
