@@ -2,9 +2,9 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, multispace0},
-    combinator::{not, peek, recognize},
+    combinator::{map, not, peek, recognize},
     multi::many0,
-    sequence::{delimited, terminated},
+    sequence::{delimited, preceded, terminated, tuple},
     IResult,
 };
 
@@ -43,6 +43,8 @@ pub const VAR_KEYWORD: &str = "var";
 pub const VAL_KEYWORD: &str = "val";
 pub const DEF_KEYWORD: &str = "def";
 pub const TEST_KEYWORD: &str = "test";
+pub const LAMBDA_KEYWORD: &str = "lambda";
+pub const RET_KEYWORD: &str = "return";
 
 // Operator and symbol constants
 pub const FUNCTION_ARROW: &str = "->";
@@ -79,15 +81,18 @@ pub fn separator<'a>(sep: &'static str) -> impl FnMut(&'a str) -> IResult<&'a st
 /// Parses a reserved keyword (e.g., "if") surrounded by optional spaces
 /// A implementação da função keyword foi alterada para que seja garantida que a keyword seja uma palavra completa e seja separada por um espaço
 pub fn keyword<'a>(kw: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
-    delimited(
-        multispace0,
-        terminated(
-            tag(kw),
-            // Ensure the keyword is not followed by an identifier character (letter, digit, or underscore)
-            peek(not(identifier_start_or_continue)),
-        ),
-        multispace0,
-    )
+    move |input: &'a str| {
+        map(
+            tuple((
+                terminated(
+                    preceded(multispace0, tag(kw)),
+                    not(peek(identifier_start_or_continue)),
+                ),
+                multispace0,
+            )),
+            |(kw, _)| kw,
+        )(input)
+    }
 }
 
 /// Parses a keyword that can be followed by expressions or identifiers

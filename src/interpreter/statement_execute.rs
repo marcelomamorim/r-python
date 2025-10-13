@@ -241,34 +241,39 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
             Ok(Computation::Continue(new_env))
         }
 
-        Statement::Assignment(name, exp) => {
-            let value = match eval(*exp, &new_env)? {
-                ExpressionResult::Value(expr) => expr,
-                ExpressionResult::Propagate(expr) => {
-                    return Ok(Computation::PropagateError(expr, new_env))
-                }
-            };
-            // Respect existing mutability; if variable exists and is immutable, propagate error
-            match new_env.lookup(&name) {
-                Some((is_mut, _)) => {
-                    if !is_mut {
-                        return Ok(Computation::PropagateError(
-                            Expression::CString(format!(
-                                "Cannot assign to immutable variable '{}'",
-                                name
-                            )),
-                            new_env,
-                        ));
-                    }
-                    let _ = new_env.update_existing_variable(&name, value);
-                }
-                None => {
-                    // If not previously declared, create as mutable (back-compat with tests)
-                    new_env.map_variable(name, true, value);
-                }
+        Statement::Assignment(name, exp) => match *exp {
+            Expression::Lambda(mut func) => {
+                func.name = name;
+                new_env.map_function(func);
+                Ok(Computation::Continue(new_env))
             }
-            Ok(Computation::Continue(new_env))
-        }
+            other_exp => {
+                let value = match eval(other_exp, &new_env)? {
+                    ExpressionResult::Value(expr) => expr,
+                    ExpressionResult::Propagate(expr) => {
+                        return Ok(Computation::PropagateError(expr, new_env))
+                    }
+                };
+                match new_env.lookup(&name) {
+                    Some((is_mut, _)) => {
+                        if !is_mut {
+                            return Ok(Computation::PropagateError(
+                                Expression::CString(format!(
+                                    "Cannot assign to immutable variable '{}'",
+                                    name
+                                )),
+                                new_env,
+                            ));
+                        }
+                        let _ = new_env.update_existing_variable(&name, value);
+                    }
+                    None => {
+                        new_env.map_variable(name, true, value);
+                    }
+                }
+                Ok(Computation::Continue(new_env))
+            }
+        },
 
         Statement::IfThenElse(cond, stmt_then, stmt_else) => {
             let value = match eval(*cond, &new_env)? {
@@ -280,12 +285,12 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
 
             match value {
                 Expression::CTrue => match *stmt_then {
-                    Statement::Block(stmts) => execute_block(stmts, &new_env),
+                    Statement::Block(stmts) => execute_if_block(stmts, &new_env),
                     _ => execute(*stmt_then, &new_env),
                 },
                 Expression::CFalse => match stmt_else {
                     Some(else_stmt) => match *else_stmt {
-                        Statement::Block(stmts) => execute_block(stmts, &new_env),
+                        Statement::Block(stmts) => execute_if_block(stmts, &new_env),
                         _ => execute(*else_stmt, &new_env),
                     },
                     None => Ok(Computation::Continue(new_env)),
@@ -482,6 +487,24 @@ pub fn execute(stmt: Statement, env: &Environment<Expression>) -> Result<Computa
 }
 
 pub fn execute_block(
+    stmts: Vec<Statement>,
+    env: &Environment<Expression>,
+) -> Result<Computation, String> {
+    let mut current_env = env.clone();
+
+    for stmt in stmts {
+        match execute(stmt, &current_env)? {
+            Computation::Continue(new_env) => current_env = new_env,
+            Computation::Return(expr, env) => return Ok(Computation::Return(expr, env)),
+            Computation::PropagateError(expr, env) => {
+                return Ok(Computation::PropagateError(expr, env))
+            }
+        }
+    }
+    Ok(Computation::Continue(current_env))
+}
+
+pub fn execute_if_block(
     stmts: Vec<Statement>,
     env: &Environment<Expression>,
 ) -> Result<Computation, String> {

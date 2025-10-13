@@ -1,7 +1,7 @@
 use crate::environment::environment::Environment;
-use crate::ir::ast::{Expression, Function, Name, Statement, Type};
+use crate::ir::ast::{Expression, FormalArgument, FuncSignature, Function, Name, Statement, Type};
 use crate::type_checker::expression_type_checker::check_expr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type ErrorMessage = String;
 
@@ -22,6 +22,7 @@ pub fn check_stmt(
         Statement::FuncDef(function) => check_func_def_stmt(function, env),
         Statement::TypeDeclaration(name, cons) => check_adt_declarations_stmt(name, cons, env),
         Statement::Return(exp) => check_return_stmt(exp, env),
+        Statement::Block(statements_vector) => check_block_statement(statements_vector, env),
 
         Statement::Assert(expr1, errmsg) => check_assert(expr1, errmsg, env),
         Statement::AssertTrue(expr1, errmsg) => check_assert_true(expr1, errmsg, env),
@@ -39,18 +40,22 @@ pub fn check_block(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     match stmt {
-        Statement::Block(stmts) => {
-            let mut block_env = env.clone();
-            block_env.push();
-
-            for s in stmts {
-                block_env = check_stmt(s, &block_env)?;
-            }
-            block_env.pop();
-            Ok(block_env)
-        }
+        Statement::Block(stmts) => check_block_statement(stmts, env),
         _ => Err("Expected a block statement".to_string()),
     }
+}
+
+fn check_block_statement(
+    statements_vector: Vec<Statement>,
+    env: &Environment<Type>,
+) -> Result<Environment<Type>, ErrorMessage> {
+    let mut new_env = env.clone();
+    new_env.push();
+    for statement in statements_vector {
+        new_env = check_stmt(statement, &new_env)?;
+    }
+    new_env.pop();
+    Ok(new_env)
 }
 
 fn check_squence_stmt(
@@ -68,25 +73,34 @@ fn check_assignment_stmt(
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
     let mut new_env = env.clone();
-    let exp_type = check_expr(&*exp, &new_env)?;
+    match *exp {
+        Expression::Lambda(mut func) => {
+            func.name = name;
+            new_env = check_func_def_stmt(func, env)?;
+            Ok(new_env)
+        }
+        other_exp => {
+            let exp_type = check_expr(&other_exp, &new_env)?;
 
-    match new_env.lookup(&name) {
-        Some((mutable, var_type)) => {
-            if !mutable {
-                Err(format!("[Type Error] cannot reassign '{:?}' variable, since it was declared as a constant value.", name))
-            } else if var_type == Type::TAny {
-                new_env.map_variable(name.clone(), true, exp_type);
-                Ok(new_env)
-            } else if var_type == exp_type {
-                Ok(new_env)
-            } else {
-                Err(format!(
-                    "[Type Error] expected '{:?}', found '{:?}'.",
-                    var_type, exp_type
-                ))
+            match new_env.lookup(&name) {
+                Some((mutable, var_type)) => {
+                    if !mutable {
+                        Err(format!("[Type Error] cannot reassign '{:?}' variable, since it was declared as a constant value.", name))
+                    } else if var_type == Type::TAny {
+                        new_env.map_variable(name.clone(), true, exp_type);
+                        Ok(new_env)
+                    } else if var_type == exp_type {
+                        Ok(new_env)
+                    } else {
+                        Err(format!(
+                            "[Type Error] expected '{:?}', found '{:?}'.",
+                            var_type, exp_type
+                        ))
+                    }
+                }
+                None => Err(format!("[Type Error] variable '{:?}' not declared.", name)),
             }
         }
-        None => Err(format!("[Type Error] variable '{:?}' not declared.", name)),
     }
 }
 
@@ -230,8 +244,28 @@ fn check_func_def_stmt(
     function: Function,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let mut new_env = env.clone();
-    new_env.push();
+    let mut new_env = Environment::new();
+    let func_signature = FuncSignature::from_func(&function);
+    new_env.set_current_func(&func_signature);
+    new_env.set_global_functions(env.get_all_functions());
+
+    let current_scope = env.get_current_scope();
+    if current_scope.functions.contains_key(&func_signature) {
+        return Err(format!(
+            "Function {:?} is defined multiple times",
+            func_signature
+        ));
+    }
+
+    let mut seen_names = HashSet::new();
+    for arg in &function.params {
+        if !seen_names.insert(arg.argument_name.clone()) {
+            return Err(format!(
+                "Duplicate parameter name '{}' found in function '{:?}'",
+                arg.argument_name, func_signature
+            ));
+        }
+    }
 
     for formal_arg in function.params.iter() {
         new_env.map_variable(
@@ -239,15 +273,33 @@ fn check_func_def_stmt(
             false,
             formal_arg.argument_type.clone(),
         );
+        if let Type::TFunction(ret_type, param_types) = &formal_arg.argument_type {
+            let mut params: Vec<FormalArgument> = Vec::new();
+            let mut count: u64 = 0;
+            for arg_type in param_types {
+                params.push(FormalArgument {
+                    argument_name: count.to_string(),
+                    argument_type: arg_type.clone(),
+                });
+                count += 1;
+            }
+            new_env.map_function(Function {
+                name: formal_arg.argument_name.clone(),
+                kind: (*ret_type.clone()),
+                params,
+                body: None,
+            });
+        }
     }
 
+    new_env.map_function(function.clone());
     if let Some(body) = function.body.clone() {
-        new_env = check_stmt(*body, &new_env)?;
+        check_stmt(*body, &new_env)?;
     }
-    new_env.pop();
-    new_env.map_function(function);
 
-    Ok(new_env)
+    let mut final_env = env.clone();
+    final_env.map_function(function);
+    Ok(final_env)
 }
 
 fn check_adt_declarations_stmt(
@@ -264,19 +316,22 @@ fn check_return_stmt(
     exp: Box<Expression>,
     env: &Environment<Type>,
 ) -> Result<Environment<Type>, ErrorMessage> {
-    let mut new_env = env.clone();
-
-    assert!(new_env.scoped_function());
-
+    let new_env = env.clone();
     let ret_type = check_expr(&*exp, &new_env)?;
 
-    match new_env.lookup(&"return".to_string()) {
-        Some(_) => Ok(new_env),
-        None => {
-            new_env.map_variable("return".to_string(), false, ret_type);
-            Ok(new_env)
-        }
+    let current_signature = new_env.get_current_func();
+    let current_func = new_env
+        .lookup_function(&current_signature)
+        .ok_or_else(|| "Type checker: No function to return from".to_string())?;
+
+    if ret_type != current_func.kind {
+        return Err(format!(
+            "Error in function {}:\n        Actual return type cannot be different from formal return type \n \
+        Actual return type: {:?} \n        Formal return type: {:?}",
+            current_signature, ret_type, current_func.kind
+        ));
     }
+    Ok(new_env)
 }
 //TODO: Apresentar Asserts
 fn check_assert(
@@ -685,7 +740,8 @@ mod tests {
 
         // Test function scoping
         env.map_function(global_func.clone());
-        assert!(env.lookup_function(&"global".to_string()).is_some());
+        let global_signature = FuncSignature::from_func(&global_func);
+        assert!(env.lookup_function(&global_signature).is_some());
     }
 
     #[test]

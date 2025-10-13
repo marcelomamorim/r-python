@@ -16,8 +16,8 @@ use crate::ir::ast::Statement;
 use crate::parser::parser_common::SEMICOLON_CHAR;
 
 pub use parse_pattern::parse_pattern_argument;
-pub use parser_expr::parse_expression;
-pub use parser_stmt::parse_statement;
+pub use parser_expr::{parse_expression, parse_lambda};
+pub use parser_stmt::{parse_formal_argument, parse_return_statement, parse_statement};
 pub use parser_type::parse_type;
 
 pub fn parse(input: &str) -> IResult<&str, Vec<Statement>> {

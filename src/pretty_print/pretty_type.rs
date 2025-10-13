@@ -62,12 +62,7 @@ impl ToDoc for Type {
                     ),
                 ));
 
-                let ret_doc = match ret.as_ref() {
-                    Some(rt) => rt.to_doc(),
-                    None => text("Unit"), // Retorno padrão se não especificado.
-                };
-
-                concat(params_doc, concat(text(" -> "), ret_doc))
+                concat(params_doc, concat(text(" -> "), ret.to_doc()))
             }
 
             // Formata a declaração de um Tipo de Dado Algébrico (ADT).
@@ -111,9 +106,9 @@ fn constructor_to_doc(name: &str, types: &[Type]) -> Rc<Doc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::ir::ast::Type;
     use crate::pretty_print::pretty;
+    use std::collections::HashMap;
 
     #[test]
     fn test_basic_type_doc() {
@@ -133,7 +128,7 @@ mod tests {
     #[test]
     fn test_function_type_layout() {
         let func_type = Type::TFunction(
-            Box::new(Some(Type::TString)),
+            Box::new(Type::TString),
             vec![
                 Type::TInteger,
                 Type::TList(Box::new(Type::TBool)),
