@@ -94,7 +94,9 @@ fn parse_return_statement(input: &str) -> IResult<&str, Statement> {
     map(
         tuple((
             keyword(RETURN_KEYWORD),
-            preceded(multispace1, parse_expression),
+            // `keyword` already consumes any trailing whitespace. Accept an optional
+            // separator here so expressions like `return-1` continue to parse.
+            preceded(multispace0, parse_expression),
         )),
         |(_, expr)| Statement::Return(Box::new(expr)),
     )(input)
