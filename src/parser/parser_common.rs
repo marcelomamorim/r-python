@@ -42,6 +42,7 @@ pub const VAR_KEYWORD: &str = "var";
 pub const VAL_KEYWORD: &str = "val";
 pub const DEF_KEYWORD: &str = "def";
 pub const TEST_KEYWORD: &str = "test";
+pub const RETURN_KEYWORD: &str = "return";
 
 // Operator and symbol constants
 pub const FUNCTION_ARROW: &str = "->";

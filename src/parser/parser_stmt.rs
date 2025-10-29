@@ -10,12 +10,13 @@ use nom::{
 };
 
 use crate::ir::ast::Type;
-use crate::ir::ast::{FormalArgument, Function, Statement};
+use crate::ir::ast::{Expression, FormalArgument, Function, Statement};
 use crate::parser::parser_common::{
     identifier, keyword, ASSERTEQ_KEYWORD, ASSERTFALSE_KEYWORD, ASSERTNEQ_KEYWORD,
     ASSERTTRUE_KEYWORD, ASSERT_KEYWORD, COLON_CHAR, COMMA_CHAR, DEF_KEYWORD, ELIF_KEYWORD,
     ELSE_KEYWORD, END_KEYWORD, EQUALS_CHAR, FOR_KEYWORD, FUNCTION_ARROW, IF_KEYWORD, IN_KEYWORD,
-    LEFT_PAREN, RIGHT_PAREN, SEMICOLON_CHAR, VAL_KEYWORD, VAR_KEYWORD, WHILE_KEYWORD,
+    LEFT_PAREN, RETURN_KEYWORD, RIGHT_PAREN, SEMICOLON_CHAR, VAL_KEYWORD, VAR_KEYWORD,
+    WHILE_KEYWORD,
 };
 use crate::parser::parser_expr::parse_expression;
 use crate::parser::parser_type::parse_type;
@@ -36,6 +37,7 @@ pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
         parse_asserttrue_statement,
         parse_test_function_definition_statement,
         parse_function_definition_statement,
+        parse_return_statement,
         // Fallback: generic assignment should be tried last
         parse_assignment_statement,
     ))(input)
@@ -85,6 +87,18 @@ fn parse_assignment_statement(input: &str) -> IResult<&str, Statement> {
             parse_expression,
         )),
         |(var, _, expr)| Statement::Assignment(var.to_string(), Box::new(expr)),
+    )(input)
+}
+
+fn parse_return_statement(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            keyword(RETURN_KEYWORD),
+            // `keyword` already consumes any trailing whitespace. Accept an optional
+            // separator here so expressions like `return-1` continue to parse.
+            preceded(multispace0, parse_expression),
+        )),
+        |(_, expr)| Statement::Return(Box::new(expr)),
     )(input)
 }
 
@@ -306,7 +320,12 @@ fn parse_function_definition_statement(input: &str) -> IResult<&str, Statement> 
     map(
         tuple((
             keyword(DEF_KEYWORD),
-            preceded(multispace1, identifier),
+            // `keyword` already consumes any trailing whitespace, so parsing the
+            // identifier directly avoids requiring an extra space that would
+            // otherwise be eaten. This ensures constructs like `def foo` parse
+            // correctly while still rejecting `deffoo` via `keyword`'s
+            // lookahead check.
+            identifier,
             delimited(
                 // Corrigido: Removido o comentário que quebrava a sintaxe
                 char::<&str, Error<&str>>(LEFT_PAREN),
@@ -409,6 +428,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_return_statement() {
+        let input = "return 42";
+        let expected = Statement::Return(Box::new(Expression::CInt(42)));
+        let parsed = parse_return_statement(input).unwrap().1;
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
     #[ignore]
     fn test_parse_if_else_statement() {
         let input = "if True: x = 1; end";
@@ -470,6 +497,21 @@ mod tests {
         });
         let parsed = parse_function_definition_statement(input).unwrap().1;
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_function_definition_statement_with_keyword_spacing() {
+        let input = "def fibonacci(n: Int) -> Int: return n; end;";
+        let (rest, parsed) = parse_function_definition_statement(input).unwrap();
+
+        assert_eq!(rest, ";");
+
+        match parsed {
+            Statement::FuncDef(Function { name, .. }) => {
+                assert_eq!(name, "fibonacci");
+            }
+            other => panic!("expected function definition, got {other:?}"),
+        }
     }
 
     #[test]
