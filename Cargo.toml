@@ -8,6 +8,8 @@ nom = "7.0"
 approx = "0.5.1"
 once_cell = "1.10"
 indexmap = "2.2"
+clap = { version = "4.5", features = ["derive"] }
+inkwell = { version = "0.2", optional = true, default-features = false, features = ["llvm16-0"] }
 
 [features]
 # Ativar contadores de instrumentação do pretty printer
@@ -16,3 +18,4 @@ pp-profile = []
 pp-flatten-cache = []
 # Mede duração do render do pretty printer e expõe função com métricas
 pp-timing = []
+llvm-backend = ["inkwell"]

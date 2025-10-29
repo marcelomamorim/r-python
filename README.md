@@ -25,6 +25,8 @@ Um compilador/interpretador experimental escrito em Rust para uma linguagem com 
   - [Valores `Maybe` (Opcionais)](#valores-maybe-opcionais)
   - [Construtores de Tipos Algébricos (ADT)](#construtores-de-tipos-algébricos-adt)
 - [Guia Rápido](#-guia-rápido)
+- [Pipeline de Compilação](#-pipeline-de-compilação)
+- [Exemplos `.rpy`](#-exemplos-rpy)
 - [Documentação Complementar](#-documentação-complementar)
 - [Contribuindo](#-contribuindo)
 
@@ -236,7 +238,43 @@ cargo test
 
 ### Executando exemplos
 
-Você pode experimentar trechos da linguagem utilizando `cargo test -- --nocapture` para observar os programas de exemplo instrumentados no `main`. Em breve disponibilizaremos uma CLI dedicada para avaliar arquivos `.rpy` diretamente.
+Com a nova CLI é possível compilar arquivos `.rpy` diretamente:
+
+```bash
+cargo run -- compile examples/hello_world.rpy
+```
+
+Por padrão o comando imprime o TAC gerado no terminal. Use `--emit assembly` para produzir assembly nativo (requer o recurso opcional `llvm-backend`).
+
+> **Nota:** habilitar `--features llvm-backend` exige uma instalação local do LLVM 16 visível para o crate `llvm-sys` (variável `LLVM_SYS_160_PREFIX` ou `llvmenv`). Sem essa dependência a compilação com o backend LLVM falhará durante o `cargo build`.
+
+```bash
+cargo run --features llvm-backend -- compile examples/hello_world.rpy --emit assembly
+```
+
+Informe `--output <arquivo>` para salvar o resultado em disco.
+
+## 🛠️ Pipeline de Compilação
+
+O módulo `ir::tac` provê o conversor de AST para **Three Address Code (TAC)**. Ele cobre operações aritméticas, controle de fluxo e chamadas de função, gerando uma representação intermediária adequada para otimizações e backends. O mesmo módulo expõe `emit_assembly`, que utiliza LLVM (via `inkwell`) quando o recurso `llvm-backend` está habilitado, permitindo converter um programa TAC em assembly nativo.
+
+O comando `r-python compile` integra todas as etapas:
+
+1. Faz o parsing do arquivo `.rpy`.
+2. Constrói a AST correspondente.
+3. Converte a AST em TAC com `TacGenerator`.
+4. Emite o TAC textual ou delega para o backend LLVM.
+
+Erros de parsing ou compilação são exibidos diretamente no terminal, facilitando o diagnóstico.
+
+## 📁 Exemplos `.rpy`
+
+Dois exemplos atualizados acompanham o repositório e servem como ponto de partida:
+
+- `examples/hello_world.rpy`: demonstra declarações `val`/`var`, condicionais e funções tipadas.
+- `examples/fibonacci.rpy`: implementa a função recursiva `fibonacci` com asserts de sanidade.
+
+Use os arquivos como base para explorar a linguagem ou para testar o pipeline de compilação.
 
 ## 📚 Documentação Complementar
 
