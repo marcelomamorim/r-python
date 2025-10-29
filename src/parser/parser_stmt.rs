@@ -320,7 +320,12 @@ fn parse_function_definition_statement(input: &str) -> IResult<&str, Statement> 
     map(
         tuple((
             keyword(DEF_KEYWORD),
-            preceded(multispace1, identifier),
+            // `keyword` already consumes any trailing whitespace, so parsing the
+            // identifier directly avoids requiring an extra space that would
+            // otherwise be eaten. This ensures constructs like `def foo` parse
+            // correctly while still rejecting `deffoo` via `keyword`'s
+            // lookahead check.
+            identifier,
             delimited(
                 // Corrigido: Removido o comentário que quebrava a sintaxe
                 char::<&str, Error<&str>>(LEFT_PAREN),
@@ -492,6 +497,21 @@ mod tests {
         });
         let parsed = parse_function_definition_statement(input).unwrap().1;
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_function_definition_statement_with_keyword_spacing() {
+        let input = "def fibonacci(n: Int) -> Int: return n; end;";
+        let (rest, parsed) = parse_function_definition_statement(input).unwrap();
+
+        assert_eq!(rest, ";");
+
+        match parsed {
+            Statement::FuncDef(Function { name, .. }) => {
+                assert_eq!(name, "fibonacci");
+            }
+            other => panic!("expected function definition, got {other:?}"),
+        }
     }
 
     #[test]
