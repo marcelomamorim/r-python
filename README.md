@@ -246,6 +246,8 @@ cargo run -- compile examples/hello_world.rpy
 
 Por padrão o comando imprime o TAC gerado no terminal. Use `--emit assembly` para produzir assembly nativo (requer o recurso opcional `llvm-backend`).
 
+> **Nota:** habilitar `--features llvm-backend` exige uma instalação local do LLVM 16 visível para o crate `llvm-sys` (variável `LLVM_SYS_160_PREFIX` ou `llvmenv`). Sem essa dependência a compilação com o backend LLVM falhará durante o `cargo build`.
+
 ```bash
 cargo run --features llvm-backend -- compile examples/hello_world.rpy --emit assembly
 ```
